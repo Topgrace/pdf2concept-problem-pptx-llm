@@ -1,0 +1,37 @@
+{
+  "assets": [
+    {
+      "file": "title-character.png",
+      "source_member": "ppt/media/image1.png",
+      "size_bytes": 5059,
+      "width_px": 215,
+      "height_px": 222,
+      "sha256": "28208296fc756e2930763134e71485c9380571d602a8e8dad769719fef7fa032"
+    },
+    {
+      "file": "header-concept-practice-1.png",
+      "source_member": "ppt/media/image2.png",
+      "size_bytes": 9818,
+      "width_px": 766,
+      "height_px": 183,
+      "sha256": "5202c7640593092158b85b70377282d2503deee603a69e566eb62bac854b71b5"
+    },
+    {
+      "file": "header-concept-practice-2.png",
+      "source_member": "ppt/media/image3.png",
+      "size_bytes": 10436,
+      "width_px": 760,
+      "height_px": 182,
+      "sha256": "3e7caad74545848d765b967cb03f10b1cba7e55a099a6a7396c49ec991415162"
+    }
+  ],
+  "metadata_assets": [
+    {
+      "file": "presentation-metadata.xml",
+      "source_member": "ppt/presentation.xml",
+      "size_bytes": 3749,
+      "sha256": "b54acc2dea1403e19210ffdc4278cbc99aa442c13d667532b12c06a649a651f8",
+      "notes": "Stripped analyzed presentation metadata with embedded-font references removed; required for PowerPoint-compatible LLM-IR deck generation."
+    }
+  ]
+}

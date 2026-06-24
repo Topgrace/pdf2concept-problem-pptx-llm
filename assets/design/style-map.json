@@ -1,0 +1,237 @@
+{
+  "schema": "pdf2concept-problem-pptx.design.v1",
+  "description": "Shared visual contract for editable concept-practice PPTX generation. Runtime generation should use this design map and skill assets, not a reference PPTX file.",
+  "canvas": {
+    "width_in": 13.333333,
+    "height_in": 7.5
+  },
+  "fonts": {
+    "korean": "나눔스퀘어라운드 ExtraBold",
+    "cover_number": "나눔스퀘어 ExtraBold",
+    "math": "BT수식M"
+  },
+  "assets": {
+    "title_character": "assets/concept-practice-style/title-character.png",
+    "presentation_metadata": "assets/concept-practice-style/presentation-metadata.xml",
+    "ooxml_style_parts": "assets/concept-practice-style/ooxml-style-parts",
+    "headers": {
+      "1": "assets/concept-practice-style/header-concept-practice-1.png",
+      "2": "assets/concept-practice-style/header-concept-practice-2.png"
+    }
+  },
+  "ooxml_style": {
+    "enabled": true,
+    "slide_layout_target": "../slideLayouts/slideLayout2.xml",
+    "problem_slide_layout_target": "../slideLayouts/slideLayout2.xml",
+    "title_slide_layout_target": "../slideLayouts/slideLayout3.xml"
+  },
+  "colors": {
+    "background": "#CCDEED",
+    "header_blue": "#4B70A7",
+    "title_blue": "#275184",
+    "yellow": "#F9EA5B",
+    "blank_line": "#A0A0A0",
+    "white": "#FFFFFF",
+    "black": "#000000"
+  },
+  "math": {
+    "fraction_min_w": 0.355,
+    "fraction_text_h": 0.404,
+    "fraction_bar_h": 0.018,
+    "fraction_num_y_offset": -0.12,
+    "fraction_bar_y_offset": 0.256,
+    "fraction_den_y_offset": 0.248,
+    "fraction_equal_vertical_gap": false,
+    "fraction_numeric_char_w": 0.157,
+    "fraction_numeric_padding": 0.158,
+    "fraction_multiplicative_char_w": 0.2,
+    "fraction_multiplicative_padding": 0.1,
+    "fraction_exponent_unit": 0.75,
+    "fraction_operator_unit": 1.4,
+    "fraction_blank_width_padding": 0.18,
+    "fraction_extra_blank_width_padding": 0.47,
+    "fraction_blank_scale": 1.0,
+    "fraction_den_blank_exp_left_padding": 0.08,
+    "fraction_den_blank_exp_right_padding": 0.04,
+    "fraction_den_blank_exp_gap": 0.023,
+    "fraction_den_blank_exp_w": 0.133,
+    "fraction_den_blank_exp_h": 0.303,
+    "fraction_den_blank_exp_font_size": 20,
+    "fraction_den_blank_bar_gap": 0.089,
+    "fraction_den_blank_exp_y_offset": -0.112,
+    "fraction_den_operator_w": 0.345,
+    "fraction_den_operator_h": 0.404,
+    "fraction_den_operator_font_size": 24,
+    "fraction_den_blank_operator_gap": 0.111,
+    "fraction_den_operator_blank_gap": 0.048,
+    "fraction_den_operator_y_offset": 0.045,
+    "split_inline_operator_objects": true,
+    "center_inline_operator_text": true,
+    "preserve_answer_parenthesis_spaces": true,
+    "answer_parenthesis_char_em": 0.47,
+    "answer_parenthesis_width_scale": 2.0,
+    "answer_parenthesis_width_padding": 0.0,
+    "inline_numeric_width_scale": 1.18,
+    "inline_numeric_width_padding": 0.04,
+    "inline_numeric_min_w": 0.0,
+    "inline_math_width_scale": 1.35,
+    "exponent_blank_scale": 0.48,
+    "exponent_blank_y_offset": -0.03,
+    "exponent_blank_pre_gap": 0.16,
+    "exponent_blank_gap": 0.04,
+    "exponent_blank_line_scale": 0.55,
+    "inline_blank_pre_gap": 0.065,
+    "inline_blank_post_gap": 0.065,
+    "token_gap": 0.08
+  },
+  "title_slide": {
+    "character": {
+      "enabled": true,
+      "x": 9.143,
+      "y": 2.36,
+      "w": 1.529,
+      "h": 1.578
+    },
+    "label": {
+      "x": 2.458,
+      "y": 2.333,
+      "w": 0.716,
+      "h": 0.293,
+      "text_x": 2.449,
+      "text_y": 2.341,
+      "text_w": 0.735,
+      "text_h": 0.278,
+      "font_size": 10.5
+    },
+    "number": {
+      "x": 2.794,
+      "y": 2.527,
+      "w": 1.419,
+      "h": 1.279,
+      "font_size": 70,
+      "outline_color": "#275184",
+      "outline_width_emu": 152400,
+      "front_fill_scheme": "bg1"
+    },
+    "title": {
+      "x": 4.244,
+      "y": 2.788,
+      "w": 7.2,
+      "h": 0.774,
+      "font_size": 40
+    }
+  },
+  "problem_slide": {
+    "panel": {
+      "x": 0.0,
+      "y": 0.4,
+      "w": 9.8,
+      "h": 7.1
+    },
+    "header": {
+      "x": 0.28,
+      "y": 0.54,
+      "w": 1.95,
+      "h": 0.46,
+      "text_x": 0.38,
+      "text_y": 0.6,
+      "text_w": 1.7,
+      "text_h": 0.28,
+      "font_size": 18
+    },
+    "prompt": {
+      "x": 0.224,
+      "y": 0.993,
+      "w": 9.428,
+      "h": 1.254,
+      "long_h": 1.86,
+      "long_text_threshold": 64,
+      "font_size": 24,
+      "line_spacing": 1.5
+    },
+    "item": {
+      "start_y": 2.749,
+      "prompt_gap": 0.502,
+      "long_prompt_gap": 0.518,
+      "row_gap": 1.12,
+      "number_x": 0.254,
+      "number_w": 0.652,
+      "number_h": 0.505,
+      "number_font_size": 24,
+      "formula_x": 1.05,
+      "formula_y_offset": -0.02,
+      "formula_w": 7.2,
+      "formula_h": 0.58,
+      "formula_font_size": 24,
+      "blank_x": 7.45,
+      "blank_y_offset": 0.03,
+      "blank_w": 0.551,
+      "blank_h": 0.551,
+      "blank_gap": 0.68,
+      "blank_line_pt": 2.5,
+      "blank_fill": "none",
+      "blank_line_theme_color": "BACKGROUND_2",
+      "blank_line_lum_mod": 75000,
+      "blank_line_cap": "rnd",
+      "blank_line_join": "round",
+      "marker_right_arrow_w": 0.4,
+      "marker_right_arrow_h": 0.292,
+      "marker_right_arrow_y_offset": 0.101,
+      "marker_right_arrow_fill_theme_color": "BACKGROUND_1",
+      "marker_right_arrow_fill_lum_mod": 50000,
+      "marker_right_arrow_gap_after": 0.032
+    },
+    "layout_overrides": {
+      "page10_practice1": {
+        "row_gap": 1.486
+      },
+      "page11_practice2": {
+        "row_gap": 2.208
+      },
+      "page14_practice1_two_items": {
+        "row_gap": 2.343,
+        "prompt_w": 9.472
+      },
+      "page14_practice1_three_items": {
+        "row_gap": 1.661,
+        "prompt_w": 9.472
+      }
+    },
+    "two_column_grid": {
+      "left_number_x": 0.246,
+      "left_formula_x": 1.076,
+      "right_number_x": 5.423,
+      "right_formula_x": 6.285,
+      "start_y": 3.371,
+      "row_gap": 1.875,
+      "formula_w": 3.55,
+      "formula_h": 0.62
+    },
+    "worked_item": {
+      "formula_font_size": 18,
+      "formula_h": 0.42,
+      "line_gap": 0.38
+    },
+    "worked_grid": {
+      "start_y": 2.749,
+      "row_gap": 2.42
+    }
+  },
+  "animation": {
+    "first_item_visible": true,
+    "reveal_target": "group",
+    "reveal_method": "p:set style.visibility visible",
+    "reading_order": "top-to-bottom, left-to-right"
+  },
+  "extraction": {
+    "include_headings": [
+      "개념 익히기",
+      "개념익히기"
+    ],
+    "exclude_headings": [
+      "개념 다지기",
+      "개념 마무리",
+      "학교 시험 준비하기"
+    ]
+  }
+}

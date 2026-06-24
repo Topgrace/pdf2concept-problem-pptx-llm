@@ -1,0 +1,4 @@
+interface:
+  display_name: "PDF 개념문제 PPTX"
+  short_description: "PDF 개념익히기 문제를 LLM 추출 IR로 강의용 PPTX 변환"
+  default_prompt: "Use $pdf2concept-problem-pptx to extract concept practice problems from a math PDF into LLM-authored IR, then build a 16:9 editable lecture PPTX matching the skill design."
