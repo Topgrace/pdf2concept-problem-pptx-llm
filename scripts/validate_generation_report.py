@@ -277,7 +277,13 @@ def validate_report(data: dict[str, Any], *, allow_warnings: bool = False) -> di
                     expected=expected_reveal,
                     actual=slide.get("click_reveal_item_numbers"),
                 )
-        key = (slide.get("page"), slide.get("practice"), slide.get("concept_no"), slide.get("concept_title"))
+        key = (
+            slide.get("page"),
+            slide.get("practice"),
+            slide.get("concept_no"),
+            slide.get("concept_title"),
+            slide.get("prompt", ""),
+        )
         chunk_index = slide.get("chunk_index")
         chunk_count = slide.get("chunk_count")
         if isinstance(chunk_index, int) and isinstance(chunk_count, int):

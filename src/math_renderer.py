@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ctypes
+from functools import lru_cache
+import os
 import re
 from typing import Any
 
@@ -30,10 +33,24 @@ SUPERSCRIPT_TO_NORMAL = {
 NORMAL_TO_SUPERSCRIPT = {value: key for key, value in SUPERSCRIPT_TO_NORMAL.items()}
 SUPERSCRIPT_DIGITS = "".join(SUPERSCRIPT_TO_NORMAL)
 SUPERSCRIPT_DIGIT_RE = f"[{SUPERSCRIPT_DIGITS}]+"
+FRACTION_EXP_SUFFIX_RE = rf"(?:{SUPERSCRIPT_DIGIT_RE}|\^\d+|\^\[\s*\])?"
+FRACTION_NUM_ATOM_RE = (
+    rf"-?(?:"
+    rf"\([^)]*\)"
+    rf"|\[\s*\]"
+    rf"|[0-9A-Za-z가-힣{SUPERSCRIPT_DIGITS}]+"
+    rf"){FRACTION_EXP_SUFFIX_RE}"
+)
+FRACTION_DEN_ATOM_RE = (
+    rf"-?(?:"
+    rf"\([^)]*\)"
+    rf"|\[\s*\]"
+    rf"|[0-9A-Za-z가-힣{SUPERSCRIPT_DIGITS}×]+"
+    rf"){FRACTION_EXP_SUFFIX_RE}"
+)
 
 FRACTION_RE = re.compile(
-    rf"(?P<num>-?\([^)]*\)|-?[0-9A-Za-z가-힣{SUPERSCRIPT_DIGITS}]+)\s*/\s*"
-    rf"(?P<den>-?\([^)]*\)|-?\[\s*\](?:{SUPERSCRIPT_DIGIT_RE}|\^\d+)?|-?[0-9A-Za-z가-힣{SUPERSCRIPT_DIGITS}×]+)"
+    rf"(?P<num>{FRACTION_NUM_ATOM_RE})\s*/\s*(?P<den>{FRACTION_DEN_ATOM_RE})"
 )
 BLANK_RE = re.compile(r"\^\[\s*\]|\[\s*\]|__|□")
 DENOMINATOR_BLANK_EXP_RE = re.compile(rf"\[\s*\](?P<exp>{SUPERSCRIPT_DIGIT_RE})?")
@@ -42,6 +59,14 @@ INLINE_OPERATOR_TOKENS = {"=", "÷", "×"}
 INLINE_NUMERIC_TOKEN_RE = re.compile(r"-?[0-9][0-9.,…]*")
 ANSWER_PAREN_TOKEN = "( )"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+LOGPIXELSX = 88
+FW_NORMAL = 400
+FW_BOLD = 700
+DEFAULT_CHARSET = 1
+OUT_DEFAULT_PRECIS = 0
+CLIP_DEFAULT_PRECIS = 0
+DEFAULT_QUALITY = 0
+DEFAULT_PITCH = 0
 
 THEME_COLORS = {
     "BACKGROUND_1": MSO_THEME_COLOR.BACKGROUND_1,
@@ -167,7 +192,72 @@ def preserve_repeated_spaces(run, value: str) -> None:
         text_node.set(XML_SPACE, "preserve")
 
 
-def estimate_text_width(text: str, size: float) -> float:
+class WinSize(ctypes.Structure):
+    _fields_ = [
+        ("cx", ctypes.c_long),
+        ("cy", ctypes.c_long),
+    ]
+
+
+@lru_cache(maxsize=4096)
+def measure_windows_text_width(text: str, font: str, size: float, bold: bool) -> float | None:
+    if os.name != "nt" or not text:
+        return None
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    screen_dc = user32.GetDC(None)
+    if not screen_dc:
+        return None
+
+    mem_dc = None
+    font_handle = None
+    old_font = None
+    try:
+        dpi = gdi32.GetDeviceCaps(screen_dc, LOGPIXELSX) or 96
+        mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+        if not mem_dc:
+            return None
+
+        height = -int(round(size * dpi / 72.0))
+        font_handle = gdi32.CreateFontW(
+            height,
+            0,
+            0,
+            0,
+            FW_BOLD if bold else FW_NORMAL,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY,
+            DEFAULT_PITCH,
+            font,
+        )
+        if not font_handle:
+            return None
+
+        old_font = gdi32.SelectObject(mem_dc, font_handle)
+        extent = WinSize()
+        ok = gdi32.GetTextExtentPoint32W(mem_dc, text, len(text), ctypes.byref(extent))
+        if not ok:
+            return None
+        return max(0.0, float(extent.cx) / float(dpi))
+    except Exception:
+        return None
+    finally:
+        if mem_dc and old_font:
+            gdi32.SelectObject(mem_dc, old_font)
+        if font_handle:
+            gdi32.DeleteObject(font_handle)
+        if mem_dc:
+            gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(None, screen_dc)
+
+
+def heuristic_text_width(text: str, size: float) -> float:
     scale = size / 21.0
     width = 0.0
     for char in text:
@@ -184,6 +274,29 @@ def estimate_text_width(text: str, size: float) -> float:
         else:
             width += 0.105
     return max(0.06, width * scale)
+
+
+def measured_or_heuristic_text_width(
+    text: str,
+    size: float,
+    font: str = MATH_FONT,
+    *,
+    bold: bool | None = None,
+) -> tuple[float, bool]:
+    measured = measure_windows_text_width(
+        text,
+        font,
+        float(size),
+        is_bt_math_font(font) if bold is None else bool(bold),
+    )
+    if measured is not None:
+        return max(0.06, measured), True
+    return heuristic_text_width(text, size), False
+
+
+def estimate_text_width(text: str, size: float, font: str = MATH_FONT, *, bold: bool | None = None) -> float:
+    width, _ = measured_or_heuristic_text_width(text, size, font, bold=bold)
+    return width
 
 
 def clear_text_frame(shape) -> None:
@@ -285,6 +398,7 @@ def measure_inline_segment_width(
     size: float,
     max_width: float,
     blank_scale: float = 1.0,
+    font: str = MATH_FONT,
 ) -> float:
     width = 0.0
     text = normalize_caret_exponents(text)
@@ -292,7 +406,7 @@ def measure_inline_segment_width(
     for match in BLANK_RE.finditer(text):
         prefix = text[pos : match.start()]
         if prefix:
-            width += min(measure_inline_text_width(prefix, design=design, size=size), max_width - width)
+            width += min(measure_inline_text_width(prefix, design=design, size=size, font=font), max_width - width)
         if width < max_width:
             if is_exponent_blank_match(text, match, design):
                 width += style_value(design, "math.exponent_blank_pre_gap", 0.16)
@@ -306,7 +420,7 @@ def measure_inline_segment_width(
 
     suffix = text[pos:]
     if suffix and width < max_width:
-        width += min(measure_inline_text_width(suffix, design=design, size=size), max_width - width)
+        width += min(measure_inline_text_width(suffix, design=design, size=size, font=font), max_width - width)
     return min(width, max_width)
 
 
@@ -338,7 +452,12 @@ def inline_text_tokens(text: str, design: dict[str, Any] | None) -> list[str]:
     return tokens
 
 
-def answer_parenthesis_token_width(token: str, size: float, design: dict[str, Any] | None) -> float:
+def answer_parenthesis_token_width(
+    token: str,
+    size: float,
+    design: dict[str, Any] | None,
+    font: str = MATH_FONT,
+) -> float:
     char_em = style_value(design, "math.answer_parenthesis_char_em", None)
     padding = style_value(design, "math.answer_parenthesis_width_padding", 0.0)
     min_width = style_value(design, "math.answer_parenthesis_min_w", 0.0)
@@ -346,29 +465,45 @@ def answer_parenthesis_token_width(token: str, size: float, design: dict[str, An
         char_slot_width = (size / 72.0) * char_em
         return max(char_slot_width * len(token) + padding, min_width)
 
-    base_width = estimate_text_width(token, size)
+    base_width = estimate_text_width(token, size, font)
     scale = style_value(design, "math.answer_parenthesis_width_scale", 2.0)
     return max(base_width * scale + padding, min_width)
 
 
-def inline_token_width(token: str, size: float, design: dict[str, Any] | None = None) -> float:
+def inline_token_width(
+    token: str,
+    size: float,
+    design: dict[str, Any] | None = None,
+    font: str = MATH_FONT,
+) -> float:
     if token in INLINE_OPERATOR_TOKENS:
-        return estimate_text_width(f" {token} ", size)
+        width, _ = measured_or_heuristic_text_width(token, size, font)
+        return width + style_value(design, "math.inline_operator_width_padding", 0.0)
     if is_answer_parenthesis_token(token):
-        return answer_parenthesis_token_width(token, size, design)
-    width = estimate_text_width(token, size)
+        return answer_parenthesis_token_width(token, size, design, font)
+    width, measured = measured_or_heuristic_text_width(token, size, font)
     if is_inline_numeric_token(token):
         scale = style_value(design, "math.inline_numeric_width_scale", 1.0)
         padding = style_value(design, "math.inline_numeric_width_padding", 0.0)
         min_width = style_value(design, "math.inline_numeric_min_w", 0.0)
-        width = max(width * scale + padding, min_width)
+        if not measured:
+            width *= scale
+        width = max(width + padding, min_width)
     else:
-        width *= style_value(design, "math.inline_math_width_scale", 1.35)
+        if not measured:
+            width *= style_value(design, "math.inline_math_width_scale", 1.35)
+        width += style_value(design, "math.inline_math_width_padding", 0.0)
     return width
 
 
-def measure_inline_text_width(text: str, *, design: dict[str, Any] | None, size: float) -> float:
-    return sum(inline_token_width(token, size, design) for token in inline_text_tokens(text, design))
+def measure_inline_text_width(
+    text: str,
+    *,
+    design: dict[str, Any] | None,
+    size: float,
+    font: str = MATH_FONT,
+) -> float:
+    return sum(inline_token_width(token, size, design, font) for token in inline_text_tokens(text, design))
 
 
 def inline_segment_text_alignment(design: dict[str, Any] | None, requested_align, token: str) -> Any:
@@ -398,7 +533,7 @@ def add_inline_text(
     for token in inline_text_tokens(text, design):
         if cursor - x >= max_width:
             break
-        width = min(inline_token_width(token, size, design), max_width - (cursor - x))
+        width = min(inline_token_width(token, size, design, font), max_width - (cursor - x))
         add_rich_text(
             container,
             cursor,
@@ -436,6 +571,7 @@ def add_inline_segment(
             size=size,
             max_width=max_width,
             blank_scale=blank_scale,
+            font=font,
         )
         cursor += max(0.0, (max_width - used_width) / 2)
     pos = 0
@@ -661,17 +797,31 @@ def add_fraction(
         bar_h=bar_h,
     )
 
-    add_rich_text(
-        container,
-        x,
-        num_y,
-        fraction_width,
-        num_h,
-        numerator,
-        size=size,
-        font=font,
-        align=PP_ALIGN.CENTER,
-    )
+    if BLANK_RE.search(numerator):
+        add_inline_segment(
+            container,
+            x,
+            num_y,
+            numerator,
+            design=design,
+            size=size * 0.86,
+            font=font,
+            max_width=fraction_width,
+            blank_scale=style_value(design, "math.fraction_blank_scale", 1.0),
+            align=PP_ALIGN.CENTER,
+        )
+    else:
+        add_rich_text(
+            container,
+            x,
+            num_y,
+            fraction_width,
+            num_h,
+            numerator,
+            size=size,
+            font=font,
+            align=PP_ALIGN.CENTER,
+        )
     bar = container.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(bar_y), Inches(fraction_width), Inches(bar_h))
     bar.fill.solid()
     bar.fill.fore_color.rgb = BLACK

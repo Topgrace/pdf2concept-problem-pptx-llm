@@ -75,6 +75,8 @@
     "inline_numeric_width_padding": 0.04,
     "inline_numeric_min_w": 0.0,
     "inline_math_width_scale": 1.35,
+    "inline_math_width_padding": 0.06,
+    "inline_operator_width_padding": 0.02,
     "exponent_blank_scale": 0.48,
     "exponent_blank_y_offset": -0.03,
     "exponent_blank_pre_gap": 0.16,
@@ -210,7 +212,10 @@
     "worked_item": {
       "formula_font_size": 18,
       "formula_h": 0.42,
-      "line_gap": 0.38
+      "line_gap": 0.38,
+      "blank_line_margin": 0.14,
+      "blank_line_gap": 0.72,
+      "fraction_blank_line_gap": 0.92
     },
     "worked_grid": {
       "start_y": 2.749,

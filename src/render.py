@@ -40,6 +40,8 @@ from .ooxml_style import apply_ooxml_style_parts
 ET.register_namespace("p", P_NS)
 ET.register_namespace("a", A_NS)
 
+BASELINE_BLANK_RE = re.compile(r"(?<!\^)\[\s*\]|__|□")
+
 
 def style_color(design: dict[str, Any] | None, name: str, default: RGBColor) -> RGBColor:
     return rgb_from_hex(get_design_value(design, f"colors.{name}", None), default)
@@ -320,13 +322,18 @@ def split_multiline_vertical_items(
     current_cost = 0
     for item in items:
         cost = item_display_line_count(item)
+        force_single_item_slide = cost >= 5 and item.blank_count >= 4
+        if current and force_single_item_slide:
+            chunks.append(current)
+            current = []
+            current_cost = 0
         if current and (current_cost + cost > line_budget or len(current) >= max_items_per_slide):
             chunks.append(current)
             current = []
             current_cost = 0
         current.append(item)
         current_cost += cost
-        if current_cost >= line_budget:
+        if force_single_item_slide or current_cost >= line_budget:
             chunks.append(current)
             current = []
             current_cost = 0
@@ -422,7 +429,7 @@ def display_segment_rows(item: PracticeItem) -> list[list[Any]]:
     for segment in item.display_segments:
         text = getattr(segment, "text", "").strip()
         kind = getattr(segment, "kind", "math")
-        if not text and kind != "marker":
+        if not text and kind not in {"marker", "number_line"}:
             continue
         line_index = int(getattr(segment, "line_index", 0))
         rows.setdefault(line_index, []).append(segment)
@@ -434,9 +441,42 @@ def display_segments_are_structured(item: PracticeItem, rows: list[list[Any]]) -
         return True
     if any(getattr(segment, "gap_after_in", None) is not None for row in rows for segment in row):
         return True
-    if any(getattr(segment, "kind", "math") == "marker" for row in rows for segment in row):
+    if any(getattr(segment, "kind", "math") in {"marker", "number_line"} for row in rows for segment in row):
         return True
     return any(getattr(segment, "kind", "math") == "korean_label" for row in rows for segment in row)
+
+
+def item_display_texts(item: PracticeItem) -> list[str]:
+    texts = [line for line in item.display_lines if line.strip()]
+    texts.extend(
+        getattr(segment, "text", "")
+        for segment in item.display_segments
+        if getattr(segment, "text", "").strip()
+    )
+    return texts or [item.expression_text, item.raw_text]
+
+
+def worked_item_line_gap(item: PracticeItem, design: dict[str, Any] | None, base_gap: float) -> float:
+    texts = item_display_texts(item)
+    has_baseline_blank = any(BASELINE_BLANK_RE.search(text) for text in texts)
+    if not has_baseline_blank:
+        return base_gap
+
+    has_fraction_blank = any("/" in text and BASELINE_BLANK_RE.search(text) for text in texts)
+    if has_fraction_blank:
+        return max(
+            base_gap,
+            style_value(design, "problem_slide.worked_item.fraction_blank_line_gap", 0.92),
+        )
+
+    blank_h = style_value(design, "problem_slide.item.blank_h", 0.551)
+    blank_y_offset = style_value(design, "problem_slide.item.blank_y_offset", 0.03)
+    blank_margin = style_value(design, "problem_slide.worked_item.blank_line_margin", 0.14)
+    minimum_gap = blank_h + blank_y_offset + blank_margin
+    return max(
+        base_gap,
+        style_value(design, "problem_slide.worked_item.blank_line_gap", minimum_gap),
+    )
 
 
 def segment_gap_after(segment: Any, default_gap: float) -> float:
@@ -510,6 +550,169 @@ def add_marker_shape(
     return marker_w
 
 
+def parse_number_line_spec(text: str) -> dict[str, str]:
+    spec: dict[str, str] = {}
+    for part in text.split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        spec[key.strip()] = value.strip()
+    return spec
+
+
+def parse_float_value(value: str | None, default: float) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def parse_bool_value(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "closed", "solid"}
+
+
+def parse_number_line_values(value: str | None) -> list[float]:
+    if not value:
+        return []
+    values: list[float] = []
+    for token in value.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            values.append(float(token))
+        except ValueError:
+            continue
+    return values
+
+
+def add_solid_rect(
+    container,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    color: RGBColor,
+    alpha: float | None = None,
+):
+    rect = container.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    rect.fill.solid()
+    rect.fill.fore_color.rgb = color
+    if alpha is not None:
+        rect.fill.transparency = max(0.0, min(1.0, alpha))
+    rect.line.fill.background()
+    return rect
+
+
+def add_number_line_arrowhead(container, x: float, y: float, direction: str, color: RGBColor) -> None:
+    arrow_w = 0.105
+    arrow_h = 0.105
+    triangle = container.add_shape(
+        MSO_SHAPE.ISOSCELES_TRIANGLE,
+        Inches(x),
+        Inches(y),
+        Inches(arrow_w),
+        Inches(arrow_h),
+    )
+    triangle.rotation = 90 if direction == "right" else 270
+    triangle.fill.solid()
+    triangle.fill.fore_color.rgb = color
+    triangle.line.fill.background()
+
+
+def add_number_line_segment(
+    container,
+    x: float,
+    y: float,
+    w: float,
+    segment: Any,
+    *,
+    design: dict[str, Any] | None,
+) -> float:
+    spec = parse_number_line_spec(getattr(segment, "text", ""))
+    point = parse_float_value(spec.get("point"), 0.0)
+    min_value = parse_float_value(spec.get("min"), point - 2.0)
+    max_value = parse_float_value(spec.get("max"), point + 2.0)
+    if min_value == max_value:
+        max_value = min_value + 1.0
+
+    axis_color = style_color(design, "text", BLACK)
+    shade_color = RGBColor(190, 153, 203)
+    axis_y = y + 0.31
+    axis_h = 0.018
+    arrow_w = 0.105
+    tick_h = 0.13
+    tick_w = 0.012
+    line_x0 = x + arrow_w
+    line_x1 = x + w - arrow_w
+    usable_w = max(0.1, line_x1 - line_x0)
+
+    def pos(value: float) -> float:
+        return line_x0 + ((value - min_value) / (max_value - min_value)) * usable_w
+
+    add_solid_rect(container, line_x0, axis_y, usable_w, axis_h, axis_color)
+    add_number_line_arrowhead(container, x, axis_y - 0.044, "left", axis_color)
+    add_number_line_arrowhead(container, x + w - arrow_w, axis_y - 0.044, "right", axis_color)
+
+    ticks = parse_number_line_values(spec.get("ticks"))
+    if not ticks and spec.get("blank", "").lower() == "true":
+        ticks = [float(value) for value in range(int(min_value), int(max_value) + 1)]
+    label_values = parse_number_line_values(spec.get("labels")) or ticks
+    labels = {
+        round(value, 6): str(int(value)) if float(value).is_integer() else str(value)
+        for value in label_values
+    }
+
+    for tick in ticks:
+        tick_x = pos(tick)
+        add_solid_rect(container, tick_x - tick_w / 2, axis_y - tick_h / 2, tick_w, tick_h, axis_color)
+        label = labels.get(round(tick, 6))
+        if label:
+            add_text(
+                container,
+                tick_x - 0.22,
+                axis_y + 0.08,
+                0.44,
+                0.20,
+                label,
+                size=style_value(design, "problem_slide.number_line.label_font_size", 10.5),
+                font=style_value(design, "fonts.math", MATH_FONT),
+                bold=True,
+            )
+
+    direction = spec.get("direction", "").strip().lower()
+    if direction in {"left", "right"} and "point" in spec:
+        point_x = pos(point)
+        shade_y = axis_y - 0.22
+        shade_h = 0.20
+        shade_x0, shade_x1 = (point_x, line_x1) if direction == "right" else (line_x0, point_x)
+        if shade_x1 > shade_x0:
+            add_solid_rect(container, shade_x0, shade_y, shade_x1 - shade_x0, shade_h, shade_color, alpha=0.25)
+            add_solid_rect(container, shade_x0, shade_y, shade_x1 - shade_x0, 0.024, axis_color)
+            arrow_x = shade_x1 - arrow_w if direction == "right" else shade_x0
+            add_number_line_arrowhead(container, arrow_x, shade_y - 0.041, direction, axis_color)
+            add_solid_rect(container, point_x - 0.011, shade_y, 0.022, axis_y - shade_y, axis_color)
+
+        dot_d = 0.14
+        dot = container.add_shape(
+            MSO_SHAPE.OVAL,
+            Inches(point_x - dot_d / 2),
+            Inches(axis_y + axis_h / 2 - dot_d / 2),
+            Inches(dot_d),
+            Inches(dot_d),
+        )
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = axis_color if parse_bool_value(spec.get("closed")) else WHITE
+        dot.line.color.rgb = axis_color
+        dot.line.width = Pt(1.0)
+
+    return w
+
+
 def add_display_segment_row(
     container,
     x: float,
@@ -526,6 +729,10 @@ def add_display_segment_row(
     label_w = style_value(design, "problem_slide.item.inline_label_w", 2.25)
     for idx, segment in enumerate(segments):
         kind = getattr(segment, "kind", "math")
+        if kind == "number_line":
+            used_w = add_number_line_segment(container, cursor, y, min(3.4, x + w - cursor), segment, design=design)
+            cursor += used_w + segment_gap_after(segment, label_gap)
+            continue
         if kind == "marker":
             used_w = add_marker_shape(container, cursor, y, segment, design=design)
             cursor += used_w + segment_gap_after(
@@ -640,6 +847,8 @@ def add_item_group(
     line_gap = style_value(design, "problem_slide.worked_item.line_gap", 0.40) if multiline else formula_h
     if multiline and display_line_count >= 7:
         line_gap = style_value(design, "problem_slide.worked_item.dense_line_gap", min(0.31, line_gap))
+    if multiline:
+        line_gap = worked_item_line_gap(item, design, line_gap)
     for line_idx, segments in enumerate(segment_rows if use_segment_rows else []):
         line_y = y + style_value(design, "problem_slide.item.formula_y_offset", -0.02) + line_idx * line_gap
         add_display_segment_row(
@@ -802,6 +1011,7 @@ def build_presentation(blocks: list[PracticeBlock], output: Path, design: dict[s
                     "practice": block.practice_no,
                     "concept_no": block.concept_no,
                     "concept_title": block.concept_title,
+                    "prompt": block.prompt,
                     "layout_type": block.layout_type,
                     "chunk_index": continuation + 1,
                     "chunk_count": len(chunks),
