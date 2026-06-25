@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import tempfile
@@ -41,6 +42,7 @@ ET.register_namespace("p", P_NS)
 ET.register_namespace("a", A_NS)
 
 BASELINE_BLANK_RE = re.compile(r"(?<!\^)\[\s*\]|__|□")
+EMU_PER_INCH = 914400
 
 
 def style_color(design: dict[str, Any] | None, name: str, default: RGBColor) -> RGBColor:
@@ -429,7 +431,7 @@ def display_segment_rows(item: PracticeItem) -> list[list[Any]]:
     for segment in item.display_segments:
         text = getattr(segment, "text", "").strip()
         kind = getattr(segment, "kind", "math")
-        if not text and kind not in {"marker", "number_line"}:
+        if not text and kind not in {"marker", "number_line", "spacer", "blank_shape"}:
             continue
         line_index = int(getattr(segment, "line_index", 0))
         rows.setdefault(line_index, []).append(segment)
@@ -441,7 +443,11 @@ def display_segments_are_structured(item: PracticeItem, rows: list[list[Any]]) -
         return True
     if any(getattr(segment, "gap_after_in", None) is not None for row in rows for segment in row):
         return True
-    if any(getattr(segment, "kind", "math") in {"marker", "number_line"} for row in rows for segment in row):
+    if any(
+        getattr(segment, "kind", "math") in {"marker", "number_line", "value_table", "equation_system", "blank_shape"}
+        for row in rows
+        for segment in row
+    ):
         return True
     return any(getattr(segment, "kind", "math") == "korean_label" for row in rows for segment in row)
 
@@ -487,6 +493,16 @@ def segment_gap_after(segment: Any, default_gap: float) -> float:
         return max(0.0, float(value))
     except (TypeError, ValueError):
         return default_gap
+
+
+def segment_width(segment: Any, default_width: float) -> float:
+    value = getattr(segment, "width_in", None)
+    if value is None:
+        return default_width
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return default_width
 
 
 def add_korean_label_text(
@@ -713,6 +729,262 @@ def add_number_line_segment(
     return w
 
 
+def segment_spec(segment: Any) -> dict[str, Any]:
+    text = str(getattr(segment, "text", "") or "").strip()
+    if not text:
+        return {}
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def add_centered_text(
+    container,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    text: str,
+    *,
+    size: float,
+    font: str,
+    bold: bool = True,
+    color: RGBColor | None = None,
+) -> None:
+    shape = add_text(container, x, y, w, h, text, size=size, font=font, bold=bold, color=color or BLACK)
+    shape.text_frame.word_wrap = False
+    for paragraph in shape.text_frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.CENTER
+
+
+def simple_fraction_parts(text: str) -> tuple[str, str] | None:
+    match = re.fullmatch(r"\s*(-?\d+)\s*/\s*(-?\d+)\s*", text)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def add_table_cell_fraction(
+    container,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    numerator: str,
+    denominator: str,
+    *,
+    size: float,
+    font: str,
+    color: RGBColor | None = None,
+) -> None:
+    fraction_w = min(max(0.16, w * 0.34), max(0.12, w - 0.08))
+    fraction_x = x + (w - fraction_w) / 2
+    bar_y = y + h * 0.50
+    num_y = y + h * 0.03
+    den_y = y + h * 0.50
+    text_h = max(0.08, h * 0.42)
+    fraction_size = max(6.5, size * 0.82)
+    add_centered_text(
+        container,
+        fraction_x,
+        num_y,
+        fraction_w,
+        text_h,
+        numerator,
+        size=fraction_size,
+        font=font,
+        color=color,
+    )
+    add_solid_rect(container, fraction_x + 0.01, bar_y, max(0.04, fraction_w - 0.02), 0.006, color or BLACK)
+    add_centered_text(
+        container,
+        fraction_x,
+        den_y,
+        fraction_w,
+        text_h,
+        denominator,
+        size=fraction_size,
+        font=font,
+        color=color,
+    )
+
+
+def add_table_cell_text(
+    container,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    text: str,
+    *,
+    size: float,
+    font: str,
+    color: RGBColor | None = None,
+) -> None:
+    fraction = simple_fraction_parts(text)
+    if fraction:
+        add_table_cell_fraction(container, x, y, w, h, fraction[0], fraction[1], size=size, font=font, color=color)
+        return
+    add_centered_text(container, x, y + 0.02, w, max(0.1, h - 0.03), text, size=size, font=font, color=color)
+
+
+def add_value_table_segment(
+    container,
+    x: float,
+    y: float,
+    segment: Any,
+    *,
+    design: dict[str, Any] | None,
+    size: float,
+) -> float:
+    spec = segment_spec(segment)
+    row_labels = [str(value) for value in spec.get("row_labels", ["x", "y"])]
+    rows = spec.get("rows", [])
+    if not isinstance(rows, list) or not rows:
+        return 0.0
+    rows = [[str(cell) for cell in row] if isinstance(row, list) else [] for row in rows]
+    column_count = max((len(row) for row in rows), default=0)
+    if not column_count:
+        return 0.0
+
+    row_label_w = float(spec.get("row_label_w", 0.36) or 0.36)
+    cell_w = float(spec.get("cell_w", 0.46) or 0.46)
+    cell_h = float(spec.get("cell_h", 0.29) or 0.29)
+    table_font_size = float(spec.get("font_size", max(8.5, size * 0.62)) or max(8.5, size * 0.62))
+    line_color = rgb_from_hex(str(spec.get("line_color", "#888888")), RGBColor(136, 136, 136))
+    header_fill = rgb_from_hex(str(spec.get("header_fill", "#DDEED7")), RGBColor(221, 238, 215))
+    white_fill = RGBColor(255, 255, 255)
+    red_cells = {
+        (int(cell[0]), int(cell[1]))
+        for cell in spec.get("red_cells", [])
+        if isinstance(cell, list) and len(cell) == 2
+    }
+    hide_red_cells = bool(spec.get("hide_red_cells", False))
+    math_font = style_value(design, "fonts.math", MATH_FONT)
+
+    table_group = container.add_group_shape()
+    table_group.name = str(spec.get("name", "value-table"))
+
+    for row_idx, row in enumerate(rows):
+        row_y = y + row_idx * cell_h
+        label_text = row_labels[row_idx] if row_idx < len(row_labels) else ""
+        for col_idx in range(column_count + 1):
+            cell_x = x if col_idx == 0 else x + row_label_w + (col_idx - 1) * cell_w
+            cell_w_current = row_label_w if col_idx == 0 else cell_w
+            rect = table_group.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                Inches(cell_x),
+                Inches(row_y),
+                Inches(cell_w_current),
+                Inches(cell_h),
+            )
+            rect.fill.solid()
+            rect.fill.fore_color.rgb = header_fill if col_idx == 0 else white_fill
+            rect.line.color.rgb = line_color
+            rect.line.width = Pt(0.5)
+
+            text = label_text if col_idx == 0 else (row[col_idx - 1] if col_idx - 1 < len(row) else "")
+            if hide_red_cells and (row_idx, col_idx - 1) in red_cells:
+                text = ""
+            if text:
+                add_table_cell_text(
+                    table_group.shapes,
+                    cell_x,
+                    row_y,
+                    cell_w_current,
+                    cell_h,
+                    text,
+                    size=table_font_size,
+                    font=math_font,
+                    color=RGBColor(255, 0, 0) if (row_idx, col_idx - 1) in red_cells and not hide_red_cells else BLACK,
+                )
+
+    return row_label_w + column_count * cell_w
+
+
+def add_equation_system_segment(
+    container,
+    x: float,
+    y: float,
+    segment: Any,
+    *,
+    design: dict[str, Any] | None,
+    size: float,
+) -> float:
+    spec = segment_spec(segment)
+    equations = [str(value) for value in spec.get("equations", []) if str(value).strip()]
+    if not equations:
+        return 0.0
+    suffix = str(spec.get("suffix", "") or "")
+    line_gap = float(spec.get("line_gap", 0.25) or 0.25)
+    brace_w = float(spec.get("brace_w", 0.20) or 0.20)
+    equation_w = float(spec.get("equation_w", 1.05) or 1.05)
+    system_size = float(spec.get("font_size", max(10.5, size * 0.68)) or max(10.5, size * 0.68))
+    math_font = style_value(design, "fonts.math", MATH_FONT)
+    korean_font = style_value(design, "fonts.korean", KOREAN_FONT)
+    height = max(0.34, line_gap * max(1, len(equations)))
+
+    system_group = container.add_group_shape()
+    system_group.name = str(spec.get("name", "equation-system"))
+    add_text(
+        system_group.shapes,
+        x,
+        y - 0.03,
+        brace_w,
+        height + 0.12,
+        "{",
+        size=system_size * 1.9,
+        font=math_font,
+        bold=True,
+    )
+    for idx, equation in enumerate(equations):
+        add_math_row(
+            system_group.shapes,
+            x + brace_w * 0.72,
+            y + idx * line_gap,
+            equation_w,
+            0.23,
+            equation,
+            design=design,
+            size=system_size,
+            font=math_font,
+        )
+    if suffix:
+        add_text(
+            system_group.shapes,
+            x + brace_w * 0.72 + equation_w + 0.06,
+            y + max(0.0, (height - 0.22) / 2),
+            float(spec.get("suffix_w", 0.72) or 0.72),
+            0.24,
+            suffix,
+            size=max(8.5, system_size * 0.78),
+            font=korean_font,
+            bold=True,
+        )
+    return brace_w * 0.72 + equation_w + (float(spec.get("suffix_w", 0.72) or 0.72) if suffix else 0.0) + 0.08
+
+
+def add_blank_shape_segment(
+    container,
+    x: float,
+    y: float,
+    segment: Any,
+    *,
+    design: dict[str, Any] | None,
+) -> float:
+    spec = segment_spec(segment)
+    scale = float(spec.get("scale", 0.55) or 0.55)
+    blank_w = float(spec.get("w", style_value(design, "problem_slide.item.blank_w", 0.551) * scale))
+    blank_h = float(spec.get("h", style_value(design, "problem_slide.item.blank_h", 0.551) * scale))
+    blank_y_offset = float(spec.get("y_offset", 0.05) or 0.05)
+    blank = container.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y + blank_y_offset), Inches(blank_w), Inches(blank_h))
+    blank.name = str(spec.get("name", "answer-blank"))
+    apply_blank_style(blank, design)
+    return blank_w
+
+
 def add_display_segment_row(
     container,
     x: float,
@@ -729,6 +1001,21 @@ def add_display_segment_row(
     label_w = style_value(design, "problem_slide.item.inline_label_w", 2.25)
     for idx, segment in enumerate(segments):
         kind = getattr(segment, "kind", "math")
+        if kind == "spacer":
+            cursor += segment_width(segment, 0.0) + segment_gap_after(segment, 0.0)
+            continue
+        if kind == "value_table":
+            used_w = add_value_table_segment(container, cursor, y, segment, design=design, size=size)
+            cursor += used_w + segment_gap_after(segment, label_gap)
+            continue
+        if kind == "equation_system":
+            used_w = add_equation_system_segment(container, cursor, y, segment, design=design, size=size)
+            cursor += used_w + segment_gap_after(segment, label_gap)
+            continue
+        if kind == "blank_shape":
+            used_w = add_blank_shape_segment(container, cursor, y, segment, design=design)
+            cursor += used_w + segment_gap_after(segment, 0.08)
+            continue
         if kind == "number_line":
             used_w = add_number_line_segment(container, cursor, y, min(3.4, x + w - cursor), segment, design=design)
             cursor += used_w + segment_gap_after(segment, label_gap)
@@ -745,7 +1032,7 @@ def add_display_segment_row(
         if not text or cursor >= x + w:
             continue
         if kind == "korean_label":
-            width = min(label_w, max(0.1, x + w - cursor))
+            width = min(segment_width(segment, label_w), max(0.1, x + w - cursor))
             add_korean_label_text(container, cursor, y, width, h, text, design=design, size=size)
             cursor += width + segment_gap_after(segment, label_gap)
             continue
@@ -767,6 +1054,291 @@ def add_display_segment_row(
             font=style_value(design, "fonts.math", MATH_FONT),
         )
         cursor += used_w + segment_gap_after(segment, label_gap)
+
+
+def layout_shape_x(
+    shape: Any,
+    *,
+    number_x: float,
+    formula_x: float,
+) -> float:
+    anchor = str(getattr(shape, "x_anchor", "") or "before_display_lines").strip()
+    offset = float(getattr(shape, "x_offset_in", 0.0) or 0.0)
+    if anchor == "before_number":
+        return number_x + offset
+    if anchor == "absolute":
+        return offset
+    return formula_x + offset
+
+
+def line_shape_color(shape: Any, design: dict[str, Any] | None) -> RGBColor:
+    return rgb_from_hex(
+        str(getattr(shape, "stroke_color", "") or "").strip(),
+        style_color(design, "text", BLACK),
+    )
+
+
+OOXML_DASH_VALUES = {
+    "solid": "solid",
+    "dash": "dash",
+    "long_dash": "lgDash",
+    "round_dot": "sysDot",
+    "square_dot": "sysDash",
+    "dash_dot": "dashDot",
+}
+
+
+def inches_to_emu(value: float) -> int:
+    return int(round(float(value) * EMU_PER_INCH))
+
+
+def point_or_default(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def curve_points(shape: Any) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]] | None:
+    x1 = getattr(shape, "x1_in", None)
+    y1 = getattr(shape, "y1_in", None)
+    x2 = getattr(shape, "x2_in", None)
+    y2 = getattr(shape, "y2_in", None)
+    if None in {x1, y1, x2, y2}:
+        return None
+    x1 = float(x1)
+    y1 = float(y1)
+    x2 = float(x2)
+    y2 = float(y2)
+    c1x = point_or_default(getattr(shape, "control1_x_in", None), x1 + (x2 - x1) / 3)
+    c1y = point_or_default(getattr(shape, "control1_y_in", None), y1 + (y2 - y1) / 3)
+    c2x = point_or_default(getattr(shape, "control2_x_in", None), x1 + 2 * (x2 - x1) / 3)
+    c2y = point_or_default(getattr(shape, "control2_y_in", None), y1 + 2 * (y2 - y1) / 3)
+    return (x1, y1), (c1x, c1y), (c2x, c2y), (x2, y2)
+
+
+def set_freeform_cubic_path(sp, points: tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]) -> None:
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    min_x = min(xs)
+    min_y = min(ys)
+    max_x = max(xs)
+    max_y = max(ys)
+    width = max(0.01, max_x - min_x)
+    height = max(0.01, max_y - min_y)
+
+    xfrm = sp.find(f"./{{{P_NS}}}spPr/{{{A_NS}}}xfrm")
+    off = xfrm.find(f"./{{{A_NS}}}off") if xfrm is not None else None
+    ext = xfrm.find(f"./{{{A_NS}}}ext") if xfrm is not None else None
+    if off is not None:
+        off.set("x", str(inches_to_emu(min_x)))
+        off.set("y", str(inches_to_emu(min_y)))
+    if ext is not None:
+        ext.set("cx", str(inches_to_emu(width)))
+        ext.set("cy", str(inches_to_emu(height)))
+
+    rel_points = [
+        (inches_to_emu(x - min_x), inches_to_emu(y - min_y))
+        for x, y in points
+    ]
+    path_w = inches_to_emu(width)
+    path_h = inches_to_emu(height)
+    path_xml = (
+        f'<a:pathLst {nsdecls("a")}>'
+        f'<a:path w="{path_w}" h="{path_h}" fill="none" stroke="true">'
+        f'<a:moveTo><a:pt x="{rel_points[0][0]}" y="{rel_points[0][1]}"/></a:moveTo>'
+        "<a:cubicBezTo>"
+        f'<a:pt x="{rel_points[1][0]}" y="{rel_points[1][1]}"/>'
+        f'<a:pt x="{rel_points[2][0]}" y="{rel_points[2][1]}"/>'
+        f'<a:pt x="{rel_points[3][0]}" y="{rel_points[3][1]}"/>'
+        "</a:cubicBezTo>"
+        "</a:path>"
+        "</a:pathLst>"
+    )
+    cust_geom = sp.find(f"./{{{P_NS}}}spPr/{{{A_NS}}}custGeom")
+    if cust_geom is None:
+        return
+    existing_path_lst = cust_geom.find(f"./{{{A_NS}}}pathLst")
+    if existing_path_lst is not None:
+        cust_geom.remove(existing_path_lst)
+    cust_geom.append(parse_xml(path_xml))
+
+
+def set_freeform_line_style(sp, shape: Any, design: dict[str, Any] | None) -> None:
+    sp_pr = sp.find(f"./{{{P_NS}}}spPr")
+    if sp_pr is None:
+        return
+    for child in list(sp_pr):
+        if child.tag in {f"{{{A_NS}}}noFill", f"{{{A_NS}}}solidFill", f"{{{A_NS}}}ln"}:
+            sp_pr.remove(child)
+    sp_pr.append(parse_xml(f'<a:noFill {nsdecls("a")}/>'))
+    stroke = line_shape_color(shape, design)
+    color_hex = f"{stroke[0]:02X}{stroke[1]:02X}{stroke[2]:02X}"
+    width_emu = max(1, int(round(float(getattr(shape, "stroke_pt", 1.0) or 1.0) * 12700)))
+    dash = OOXML_DASH_VALUES.get(str(getattr(shape, "stroke_dash", "solid") or "solid").strip().lower(), "solid")
+    dash_xml = "" if dash == "solid" else f'<a:prstDash val="{dash}"/>'
+    arrowhead = str(getattr(shape, "arrowhead", "") or "").strip().lower()
+    head_xml = ""
+    if arrowhead not in {"", "none", "false"}:
+        head_type = "triangle" if arrowhead in {"triangle", "arrow", "arrowhead"} else arrowhead
+        head_xml = f'<a:headEnd type="{head_type}" w="sm" len="sm"/>'
+    sp_pr.append(
+        parse_xml(
+            f'<a:ln {nsdecls("a")} w="{width_emu}">'
+            f'<a:solidFill><a:srgbClr val="{color_hex}"/></a:solidFill>'
+            f"{dash_xml}"
+            f"{head_xml}"
+            "</a:ln>"
+        )
+    )
+
+
+def add_curved_arrow_shape(
+    container,
+    shape: Any,
+    *,
+    number_x: float,
+    formula_x: float,
+    y: float,
+    line_gap: float,
+    formula_y_offset: float,
+    design: dict[str, Any] | None,
+) -> bool:
+    points = curve_points(shape)
+    if points is None:
+        start_x = layout_shape_x(shape, number_x=number_x, formula_x=formula_x)
+        start_y = y + formula_y_offset + float(getattr(shape, "y_start_offset_in", 0.0) or 0.0)
+        end_x = start_x + float(getattr(shape, "width_in", 0.16) or 0.16)
+        end_y = y + formula_y_offset + line_gap + float(getattr(shape, "y_end_offset_in", 0.0) or 0.0)
+        points = (
+            (start_x, start_y),
+            (start_x + (end_x - start_x) / 3, start_y + (end_y - start_y) / 3),
+            (start_x + 2 * (end_x - start_x) / 3, start_y + 2 * (end_y - start_y) / 3),
+            (end_x, end_y),
+        )
+
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    sp = container._spTree.add_freeform_sp(
+        inches_to_emu(min(xs)),
+        inches_to_emu(min(ys)),
+        inches_to_emu(max(0.01, max(xs) - min(xs))),
+        inches_to_emu(max(0.01, max(ys) - min(ys))),
+    )
+    c_nv_pr = sp.find(f"./{{{P_NS}}}nvSpPr/{{{P_NS}}}cNvPr")
+    if c_nv_pr is not None:
+        c_nv_pr.set("name", str(getattr(shape, "name", "") or "curved-arrow"))
+    set_freeform_cubic_path(sp, points)
+    set_freeform_line_style(sp, shape, design)
+    return True
+
+
+def add_brace_connector_shape(
+    container,
+    shape: Any,
+    *,
+    number_x: float,
+    formula_x: float,
+    y: float,
+    line_gap: float,
+    formula_y_offset: float,
+    design: dict[str, Any] | None,
+) -> bool:
+    shape_name = str(getattr(shape, "shape", "") or "left_square_bracket").strip()
+    if shape_name not in {"left_square_bracket", "right_square_bracket"}:
+        return False
+
+    try:
+        line_start = int(getattr(shape, "line_start", 0))
+    except (TypeError, ValueError):
+        line_start = 0
+    try:
+        line_end = int(getattr(shape, "line_end", line_start))
+    except (TypeError, ValueError):
+        line_end = line_start
+    if line_end < line_start:
+        line_start, line_end = line_end, line_start
+
+    tick_lines = []
+    for line in getattr(shape, "tick_lines", []) or []:
+        try:
+            line_value = int(line)
+        except (TypeError, ValueError):
+            continue
+        if line_start <= line_value <= line_end:
+            tick_lines.append(line_value)
+    if not tick_lines:
+        tick_lines = sorted({line_start, line_end})
+
+    width = max(0.02, float(getattr(shape, "width_in", 0.16) or 0.16))
+    stroke_w = max(0.003, float(getattr(shape, "stroke_pt", 1.0) or 1.0) / 72.0)
+    color = line_shape_color(shape, design)
+    x0 = layout_shape_x(shape, number_x=number_x, formula_x=formula_x)
+    vertical_x = x0 if shape_name == "left_square_bracket" else x0 + width - stroke_w
+    tick_x = x0 if shape_name == "left_square_bracket" else x0
+
+    y_start = (
+        y
+        + formula_y_offset
+        + line_start * line_gap
+        + float(getattr(shape, "y_start_offset_in", 0.0) or 0.0)
+    )
+    y_end = (
+        y
+        + formula_y_offset
+        + line_end * line_gap
+        + float(getattr(shape, "y_end_offset_in", 0.0) or 0.0)
+    )
+    if y_end < y_start:
+        y_start, y_end = y_end, y_start
+    add_solid_rect(container, vertical_x, y_start, stroke_w, max(stroke_w, y_end - y_start + stroke_w), color)
+
+    tick_y_offset = float(getattr(shape, "tick_y_offset_in", 0.0) or 0.0)
+    for line in tick_lines:
+        tick_y = y + formula_y_offset + line * line_gap + tick_y_offset
+        add_solid_rect(container, tick_x, tick_y, width, stroke_w, color)
+    return True
+
+
+def add_item_layout_shapes(
+    container,
+    item: PracticeItem,
+    *,
+    number_x: float,
+    formula_x: float,
+    y: float,
+    line_gap: float,
+    formula_y_offset: float,
+    design: dict[str, Any] | None,
+) -> int:
+    rendered_count = 0
+    for shape in item.layout_shapes:
+        kind = getattr(shape, "kind", "")
+        if kind == "brace_connector":
+            if add_brace_connector_shape(
+                container,
+                shape,
+                number_x=number_x,
+                formula_x=formula_x,
+                y=y,
+                line_gap=line_gap,
+                formula_y_offset=formula_y_offset,
+                design=design,
+            ):
+                rendered_count += 1
+        elif kind == "curved_arrow":
+            if add_curved_arrow_shape(
+                container,
+                shape,
+                number_x=number_x,
+                formula_x=formula_x,
+                y=y,
+                line_gap=line_gap,
+                formula_y_offset=formula_y_offset,
+                design=design,
+            ):
+                rendered_count += 1
+    return rendered_count
 
 
 def split_two_column_worked_rows(items: list[PracticeItem]) -> list[list[PracticeItem]]:
@@ -794,6 +1366,11 @@ def add_blank_if_needed(group, text: str, x: float, y: float, design: dict[str, 
         )
         apply_blank_style(blank, design)
         x += style_value(design, "problem_slide.item.blank_gap", 0.68)
+
+
+def item_group_label(item: PracticeItem, idx: int) -> str:
+    number = item.number if item.number is not None else idx + 1
+    return f"problem-{number}"
 
 
 def add_item_group(
@@ -830,8 +1407,9 @@ def add_item_group(
             formula_size = style_value(design, "problem_slide.worked_item.dense_formula_font_size", min(16, formula_size))
             formula_h = style_value(design, "problem_slide.worked_item.dense_formula_h", min(0.34, formula_h))
     group = slide.shapes.add_group_shape()
-    group.name = f"reveal-item-{idx}" if reveal else f"visible-item-{idx}"
-    add_text(
+    item_label = item_group_label(item, idx)
+    group.name = f"reveal-item-{idx}-{item_label}" if reveal else f"visible-item-{idx}-{item_label}"
+    number_shape = add_text(
         group.shapes,
         number_x,
         y,
@@ -841,6 +1419,7 @@ def add_item_group(
         size=style_value(design, "problem_slide.item.number_font_size", 21),
         bold=True,
     )
+    number_shape.name = f"{item_label}-number"
     segment_rows = display_segment_rows(item)
     use_segment_rows = display_segments_are_structured(item, segment_rows)
     lines = [] if use_segment_rows else split_worked_expression_lines(item)
@@ -849,10 +1428,28 @@ def add_item_group(
         line_gap = style_value(design, "problem_slide.worked_item.dense_line_gap", min(0.31, line_gap))
     if multiline:
         line_gap = worked_item_line_gap(item, design, line_gap)
+    formula_y_offset = style_value(design, "problem_slide.item.formula_y_offset", -0.02)
+    if item.layout_shapes:
+        bracket_group = group.shapes.add_group_shape()
+        bracket_group.name = f"{item_label}-bracket"
+        rendered_count = add_item_layout_shapes(
+            bracket_group.shapes,
+            item,
+            number_x=number_x,
+            formula_x=formula_x,
+            y=y,
+            line_gap=line_gap,
+            formula_y_offset=formula_y_offset,
+            design=design,
+        )
+        if rendered_count == 0:
+            bracket_group.name = f"{item_label}-bracket-empty"
     for line_idx, segments in enumerate(segment_rows if use_segment_rows else []):
-        line_y = y + style_value(design, "problem_slide.item.formula_y_offset", -0.02) + line_idx * line_gap
+        line_y = y + formula_y_offset + line_idx * line_gap
+        line_group = group.shapes.add_group_shape()
+        line_group.name = f"{item_label}-line-{line_idx + 1}"
         add_display_segment_row(
-            group.shapes,
+            line_group.shapes,
             formula_x,
             line_y,
             formula_w,
@@ -862,9 +1459,11 @@ def add_item_group(
             size=formula_size,
         )
     for line_idx, expr in enumerate(lines):
-        line_y = y + style_value(design, "problem_slide.item.formula_y_offset", -0.02) + line_idx * line_gap
+        line_y = y + formula_y_offset + line_idx * line_gap
+        line_group = group.shapes.add_group_shape()
+        line_group.name = f"{item_label}-line-{line_idx + 1}"
         add_math_row(
-            group.shapes,
+            line_group.shapes,
             formula_x,
             line_y,
             formula_w,
@@ -901,6 +1500,10 @@ def add_vertical_items(
     override_key = vertical_layout_override_key(block, items)
     if override_key:
         row_gap = style_value(design, f"problem_slide.layout_overrides.{override_key}.row_gap", row_gap)
+    max_segment_rows = max((len(display_segment_rows(item)) for item in items), default=1)
+    if max_segment_rows >= 2:
+        worked_line_gap = style_value(design, "problem_slide.worked_item.line_gap", 0.38)
+        row_gap = max(row_gap, max_segment_rows * worked_line_gap + 0.22)
     for idx, item in enumerate(items):
         add_item_group(slide, item, idx, reveal=idx > 0, design=design, y=start_y + idx * row_gap)
 

@@ -30,6 +30,7 @@ def build_quality_summary(blocks: list[PracticeBlock], deck_info: dict) -> dict:
     fraction_item_count = 0
     exponent_item_count = 0
     multiline_item_count = 0
+    layout_shape_count = 0
 
     for block in blocks:
         block_id = f"p{block.page}-practice{block.practice_no}"
@@ -87,6 +88,7 @@ def build_quality_summary(blocks: list[PracticeBlock], deck_info: dict) -> dict:
             fraction_item_count += int(item.fraction_count > 0)
             exponent_item_count += int(item.has_exponent)
             multiline_item_count += int(len([line for line in item.source_lines if line.strip()]) > 1)
+            layout_shape_count += len(item.layout_shapes)
             source_blank_count = len(item.source_blanks)
             if source_blank_count:
                 token_blank_count = text_square_blank_count(item.raw_text)
@@ -160,6 +162,7 @@ def build_quality_summary(blocks: list[PracticeBlock], deck_info: dict) -> dict:
         "source_fraction_item_count": fraction_item_count,
         "source_exponent_item_count": exponent_item_count,
         "source_multiline_item_count": multiline_item_count,
+        "source_layout_shape_count": layout_shape_count,
         "warning_count": len(warnings),
         "warnings": warnings,
         "normalization_count": len(normalizations),

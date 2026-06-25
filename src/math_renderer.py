@@ -68,6 +68,25 @@ CLIP_DEFAULT_PRECIS = 0
 DEFAULT_QUALITY = 0
 DEFAULT_PITCH = 0
 
+
+def previous_non_space(text: str, index: int) -> str:
+    for pos in range(index - 1, -1, -1):
+        if not text[pos].isspace():
+            return text[pos]
+    return ""
+
+
+def is_left_operand_char(char: str) -> bool:
+    return bool(char) and (char.isalnum() or char in {")", "]", *SUPERSCRIPT_DIGITS})
+
+
+def fraction_match_has_binary_minus(text: str, match: re.Match[str]) -> bool:
+    numerator = match.group("num")
+    if not numerator.startswith("-"):
+        return False
+    return is_left_operand_char(previous_non_space(text, match.start()))
+
+
 THEME_COLORS = {
     "BACKGROUND_1": MSO_THEME_COLOR.BACKGROUND_1,
     "BACKGROUND_2": MSO_THEME_COLOR.BACKGROUND_2,
@@ -617,7 +636,12 @@ def add_inline_segment(
 
 
 def cleaned_fraction_text(text: str) -> str:
-    return text.strip()
+    text = text.strip()
+    if text.startswith("(") and text.endswith(")"):
+        inner = text[1:-1].strip()
+        if inner:
+            return inner
+    return text
 
 
 def is_multiplicative_group(text: str) -> bool:
@@ -963,7 +987,9 @@ def add_math_row(
     text = normalize_caret_exponents(text)
     pos = 0
     for match in FRACTION_RE.finditer(text):
-        prefix = text[pos : match.start()]
+        split_binary_minus = fraction_match_has_binary_minus(text, match)
+        fraction_start = match.start() + (1 if split_binary_minus else 0)
+        prefix = text[pos:fraction_start]
         if prefix:
             cursor += add_inline_segment(
                 container,
@@ -977,11 +1003,14 @@ def add_math_row(
             )
         if cursor >= x + w:
             return w
+        numerator = match.group("num")
+        if split_binary_minus:
+            numerator = numerator[1:]
         cursor += add_fraction(
             container,
             cursor,
             y,
-            match.group("num"),
+            numerator,
             match.group("den"),
             design=design,
             size=size,

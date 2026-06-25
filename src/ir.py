@@ -1,3 +1,5 @@
+"""중간 표현(IR) 데이터 모델을 정의하는 파일."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -5,12 +7,15 @@ import re
 
 
 KOREAN_LABEL_TEXTS = (
+    "일 때",
+    "일때",
+    "이면",
     "분모의 소인수:",
     "순환마디:",
     "간단히 표현:",
 )
 
-MATH_TOKEN_RE = re.compile(r"\d|[=+\-×÷/()[\]\^⁰¹²³⁴⁵⁶⁷⁸⁹]")
+MATH_TOKEN_RE = re.compile(r"\d|[=+\-×÷/<>≤≥()[\]\^⁰¹²³⁴⁵⁶⁷⁸⁹]")
 BLANK_TOKEN_RE = re.compile(r"\^\[\s*\]|\[\s*\]|__|□")
 
 
@@ -48,6 +53,7 @@ class DisplaySegment:
     text: str
     line_index: int = 0
     gap_after_in: float | None = None
+    width_in: float | None = None
     shape: str | None = None
 
     def to_dict(self) -> dict:
@@ -58,8 +64,77 @@ class DisplaySegment:
         }
         if self.gap_after_in is not None:
             data["gap_after_in"] = round(self.gap_after_in, 3)
+        if self.width_in is not None:
+            data["width_in"] = round(self.width_in, 3)
         if self.shape:
             data["shape"] = self.shape
+        return data
+
+
+@dataclass
+class LayoutShape:
+    """Editable layout-only shape attached to a practice item."""
+
+    kind: str
+    shape: str = ""
+    name: str = ""
+    line_start: int = 0
+    line_end: int = 0
+    tick_lines: list[int] = field(default_factory=list)
+    x_anchor: str = "before_display_lines"
+    x_offset_in: float = 0.0
+    x1_in: float | None = None
+    y1_in: float | None = None
+    control1_x_in: float | None = None
+    control1_y_in: float | None = None
+    control2_x_in: float | None = None
+    control2_y_in: float | None = None
+    x2_in: float | None = None
+    y2_in: float | None = None
+    y_start_offset_in: float = 0.0
+    y_end_offset_in: float = 0.0
+    tick_y_offset_in: float = 0.0
+    width_in: float = 0.16
+    stroke_pt: float = 1.0
+    stroke_color: str = "#111111"
+    stroke_dash: str = "solid"
+    arrowhead: str = "none"
+
+    def to_dict(self) -> dict:
+        data = {
+            "kind": self.kind,
+            "shape": self.shape,
+            "name": self.name,
+            "line_start": self.line_start,
+            "line_end": self.line_end,
+            "tick_lines": self.tick_lines,
+            "x_anchor": self.x_anchor,
+            "x_offset_in": round(self.x_offset_in, 3),
+            "y_start_offset_in": round(self.y_start_offset_in, 3),
+            "y_end_offset_in": round(self.y_end_offset_in, 3),
+            "tick_y_offset_in": round(self.tick_y_offset_in, 3),
+            "width_in": round(self.width_in, 3),
+            "stroke_pt": round(self.stroke_pt, 3),
+            "stroke_color": self.stroke_color,
+            "stroke_dash": self.stroke_dash,
+            "arrowhead": self.arrowhead,
+        }
+        if self.x1_in is not None:
+            data["x1_in"] = round(self.x1_in, 3)
+        if self.y1_in is not None:
+            data["y1_in"] = round(self.y1_in, 3)
+        if self.control1_x_in is not None:
+            data["control1_x_in"] = round(self.control1_x_in, 3)
+        if self.control1_y_in is not None:
+            data["control1_y_in"] = round(self.control1_y_in, 3)
+        if self.control2_x_in is not None:
+            data["control2_x_in"] = round(self.control2_x_in, 3)
+        if self.control2_y_in is not None:
+            data["control2_y_in"] = round(self.control2_y_in, 3)
+        if self.x2_in is not None:
+            data["x2_in"] = round(self.x2_in, 3)
+        if self.y2_in is not None:
+            data["y2_in"] = round(self.y2_in, 3)
         return data
 
 
@@ -82,6 +157,7 @@ class PracticeItem:
     source_lines: list[str] = field(default_factory=list)
     display_lines: list[str] = field(default_factory=list)
     display_segments: list[DisplaySegment] = field(default_factory=list)
+    layout_shapes: list[LayoutShape] = field(default_factory=list)
 
     @classmethod
     def from_text(
@@ -95,6 +171,7 @@ class PracticeItem:
         source_lines: list[str] | None = None,
         display_lines: list[str] | None = None,
         display_segments: list[DisplaySegment] | None = None,
+        layout_shapes: list[LayoutShape] | None = None,
     ) -> "PracticeItem":
         number_match = re.match(r"^\((\d{1,2})\)\s*", text)
         number = int(number_match.group(1)) if number_match else None
@@ -126,6 +203,7 @@ class PracticeItem:
             source_lines=source_lines,
             display_lines=display_lines,
             display_segments=display_segments,
+            layout_shapes=layout_shapes or [],
         )
 
     def to_dict(self) -> dict:
@@ -144,6 +222,7 @@ class PracticeItem:
             "source_lines": self.source_lines,
             "display_lines": self.display_lines,
             "display_segments": [segment.to_dict() for segment in self.display_segments],
+            "layout_shapes": [shape.to_dict() for shape in self.layout_shapes],
             "source_box": self.source_box.to_dict() if self.source_box else None,
         }
 
@@ -227,6 +306,19 @@ def display_segments_from_display_lines(display_lines: list[str]) -> list[Displa
         text = line.strip()
         if not text:
             continue
+        if text.startswith("→"):
+            segments.append(
+                DisplaySegment(
+                    kind="marker",
+                    text="",
+                    line_index=line_index,
+                    gap_after_in=0.032,
+                    shape="right_arrow",
+                )
+            )
+            text = text[1:].strip()
+            if not text:
+                continue
         inline_split = split_inline_korean_label(text)
         if inline_split:
             math_text, label_text = inline_split

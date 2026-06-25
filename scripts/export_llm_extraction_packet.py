@@ -59,25 +59,69 @@ def build_llm_ir_template(pdf_path: Path, pages: str) -> dict:
                 "items": [
                     {
                         "number": 1,
-                        "raw_text": "(1) a^[ ]×[ ]",
-                        "blank_count": 2,
+                        "raw_text": "(1) x²+y-5 등식이다. (     ) / 문자의 차수가 모두 1이다. (     ) / 미지수가 2개인 일차방정식이다. (     )",
+                        "blank_count": 0,
                         "row_index": 0,
                         "column_index": 0,
-                        "source_lines": [],
-                        "display_lines": [],
+                        "source_lines": [
+                            "(1) x²+y-5 등식이다. (     )",
+                            "문자의 차수가 모두 1이다. (     )",
+                            "미지수가 2개인 일차방정식이다. (     )",
+                        ],
+                        "display_lines": [
+                            "x²+y-5 등식이다. (     )",
+                            "문자의 차수가 모두 1이다. (     )",
+                            "미지수가 2개인 일차방정식이다. (     )",
+                        ],
                         "display_segments": [
                             {
                                 "kind": "math",
-                                "text": "a^[ ]×[ ]",
+                                "text": "x²+y-5",
                                 "line_index": 0,
-                                "gap_after_in": None,
                             },
                             {
-                                "kind": "marker",
-                                "shape": "right_arrow",
-                                "text": "",
+                                "kind": "korean_label",
+                                "text": "등식이다.",
                                 "line_index": 0,
-                                "gap_after_in": 0.032,
+                            },
+                            {
+                                "kind": "math",
+                                "text": "(     )",
+                                "line_index": 0,
+                            },
+                            {
+                                "kind": "korean_label",
+                                "text": "문자의 차수가 모두 1이다.",
+                                "line_index": 1,
+                            },
+                            {
+                                "kind": "math",
+                                "text": "(     )",
+                                "line_index": 1,
+                            },
+                            {
+                                "kind": "korean_label",
+                                "text": "미지수가 2개인 일차방정식이다.",
+                                "line_index": 2,
+                            },
+                            {
+                                "kind": "math",
+                                "text": "(     )",
+                                "line_index": 2,
+                            }
+                        ],
+                        "layout_shapes": [
+                            {
+                                "kind": "brace_connector",
+                                "shape": "left_square_bracket",
+                                "line_start": 0,
+                                "line_end": 2,
+                                "tick_lines": [0, 1, 2],
+                                "x_anchor": "before_display_lines",
+                                "x_offset_in": -0.18,
+                                "width_in": 0.16,
+                                "stroke_pt": 1.0,
+                                "stroke_color": "#111111",
                             }
                         ],
                     }
@@ -125,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             "blank_count_must_equal_visible_blank_token_count": True,
             "do_not_invent_square_blanks": True,
             "do_not_show_source_answers": True,
+            "represent_visible_line_connectors_as_layout_shapes": True,
+            "left_bracket_connector_shape": "layout_shapes kind=brace_connector shape=left_square_bracket",
             "return_llm_ir_json_only": True,
         },
     }

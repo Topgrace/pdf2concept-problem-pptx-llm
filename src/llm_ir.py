@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .ir import DisplaySegment, PracticeBlock, PracticeItem, SourceBox
+from .ir import DisplaySegment, LayoutShape, PracticeBlock, PracticeItem, SourceBox
 
 
 SCHEMA = "pdf2concept-problem-pptx.llm-ir.v1"
@@ -39,10 +39,87 @@ def display_segments_from_dicts(values: list[dict[str, Any]] | None) -> list[Dis
                 text=str(value.get("text", "")),
                 line_index=int(value.get("line_index", 0)),
                 gap_after_in=float(gap_after) if gap_after is not None else None,
+                width_in=float(value["width_in"]) if value.get("width_in") is not None else None,
                 shape=str(value.get("shape", "")) or None,
             )
         )
     return segments
+
+
+def int_list_from_value(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        try:
+            result.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def float_from_value(value: Any, default: float) -> float:
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def optional_float_from_value(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def layout_shapes_from_dicts(values: list[dict[str, Any]] | None) -> list[LayoutShape] | None:
+    if not values:
+        return None
+    shapes = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        try:
+            line_start = int(value.get("line_start", 0))
+        except (TypeError, ValueError):
+            line_start = 0
+        try:
+            line_end = int(value.get("line_end", line_start))
+        except (TypeError, ValueError):
+            line_end = line_start
+        shapes.append(
+            LayoutShape(
+                kind=str(value.get("kind", "")).strip(),
+                shape=str(value.get("shape", "")).strip(),
+                name=str(value.get("name", "")).strip(),
+                line_start=line_start,
+                line_end=line_end,
+                tick_lines=int_list_from_value(value.get("tick_lines")),
+                x_anchor=str(value.get("x_anchor", "before_display_lines")).strip() or "before_display_lines",
+                x_offset_in=float_from_value(value.get("x_offset_in"), 0.0),
+                x1_in=optional_float_from_value(value.get("x1_in")),
+                y1_in=optional_float_from_value(value.get("y1_in")),
+                control1_x_in=optional_float_from_value(value.get("control1_x_in")),
+                control1_y_in=optional_float_from_value(value.get("control1_y_in")),
+                control2_x_in=optional_float_from_value(value.get("control2_x_in")),
+                control2_y_in=optional_float_from_value(value.get("control2_y_in")),
+                x2_in=optional_float_from_value(value.get("x2_in")),
+                y2_in=optional_float_from_value(value.get("y2_in")),
+                y_start_offset_in=float_from_value(value.get("y_start_offset_in"), 0.0),
+                y_end_offset_in=float_from_value(value.get("y_end_offset_in"), 0.0),
+                tick_y_offset_in=float_from_value(value.get("tick_y_offset_in"), 0.0),
+                width_in=float_from_value(value.get("width_in"), 0.16),
+                stroke_pt=float_from_value(value.get("stroke_pt"), 1.0),
+                stroke_color=str(value.get("stroke_color", "#111111")).strip() or "#111111",
+                stroke_dash=str(value.get("stroke_dash", "solid")).strip() or "solid",
+                arrowhead=str(value.get("arrowhead", "none")).strip() or "none",
+            )
+        )
+    return shapes
 
 
 def item_from_dict(data: dict[str, Any], fallback_index: int) -> PracticeItem:
@@ -83,6 +160,7 @@ def item_from_dict(data: dict[str, Any], fallback_index: int) -> PracticeItem:
         source_lines=[str(line) for line in data.get("source_lines", [])] or None,
         display_lines=[str(line) for line in data.get("display_lines", [])] or None,
         display_segments=display_segments_from_dicts(data.get("display_segments")),
+        layout_shapes=layout_shapes_from_dicts(data.get("layout_shapes")),
     )
     if data.get("expression_text"):
         item.expression_text = str(data["expression_text"]).strip()
